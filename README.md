@@ -90,6 +90,53 @@ zero npm dependencies, so Render's free tier works fine.
 
 ---
 
+## Telegram bot (same project, route `/tg`)
+
+`functions/tg.js` adds a Telegram front-end to the *same* Pages deploy — it
+reuses `SENSENOVA_API_KEY` and needs no extra hosting. Send text → get an
+image; reply to a photo with an instruction → get an edited image.
+Settings live behind commands with inline buttons: `/model`, `/size`,
+`/format`, `/options` (watermark / rewriting toggles), `/settings`, `/reset`.
+Settings are kept in the Worker's short-term memory and can reset — the
+per-message tags `[fast] [2048x2048] [jpeg] [watermark] [noextend]` always
+work regardless.
+
+1. **Create the bot:** message [@BotFather](https://t.me/BotFather) → `/newbot`
+   → copy the token.
+2. **Add two more Secrets** in Pages Settings → Environment variables:
+   - `TELEGRAM_BOT_TOKEN` = the token from BotFather
+   - `TELEGRAM_WEBHOOK_SECRET` = any long random string, e.g. from
+     <https://randomkeygen.com>
+   - `TELEGRAM_ALLOWED_IDS` = leave empty for the first run (see step 5)
+3. **Retry the deployment** so both variables are live.
+4. **Register the webhook** — open this in a browser (GET works the same):
+   ```
+   https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<project>.pages.dev/tg&secret_token=<SECRET>
+   ```
+   Expect `{"ok":true,"result":true,...}`. Re-run it anytime to change the URL.
+   To remove: `.../deleteWebhook`.
+5. **Set your allowlist:** DM the bot `/id` — it answers your numeric id even
+   while no allowlist is set. Put it into `TELEGRAM_ALLOWED_IDS`
+   (comma-separated for friends), retry the deployment, then `/start` and
+   generate.
+6. Optional: BotFather → `/setdescription` and `/setcommands`:
+   ```
+   start - help
+   model - choose model
+   size - choose size
+   format - png or jpeg
+   options - watermark and rewriting
+   settings - show current setup
+   reset - restore defaults
+   id - show my telegram id
+   ```
+
+Security: the webhook verifies Telegram's `X-Telegram-Bot-Api-Secret-Token`
+header, so strangers POSTing to `/tg` are rejected; the allowlist gates
+generation. Commands like `/id` still answer anyone — harmless (their own id).
+
+---
+
 ## Security notes
 
 - The proxy **whitelists** exactly the parameters the docs define and forces
