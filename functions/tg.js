@@ -111,8 +111,26 @@ export async function onRequestPost(context) {
   }
 
   // Telegram times out webhooks at ~60s; acknowledge now, work in background.
-  waitUntil(handleUpdate(update, env).catch((err) => console.error("bot:", err)));
+  waitUntil(
+    handleUpdate(update, env).catch((err) => {
+      log(env, update?.message?.chat?.id ?? update?.callback_query?.message?.chat?.id ?? "?", "crash", (err.stack || err).toString());
+    }),
+  );
   return new Response("ok");
+}
+
+/* ---------- event log (Cloudflare KV binding named LOGS; optional) ---------- */
+
+async function log(env, chatId, event, detail = "") {
+  if (!env.LOGS) return;
+  try {
+    const key = `log-${String(Date.now()).padStart(14, "0")}-${Math.random().toString(36).slice(2, 8)}`;
+    await env.LOGS.put(
+      key,
+      JSON.stringify({ t: Date.now(), chatId, event, detail: String(detail).slice(0, 400) }),
+      { expirationTtl: 7 * 24 * 3600 },
+    );
+  } catch { /* logging must never break the bot */ }
 }
 
 /* ---------- routing ---------- */
@@ -126,18 +144,24 @@ async function handleUpdate(update, env) {
   const chatId = msg.chat.id;
   const userId = msg.from?.id ?? 0;
   const text = (msg.text || "").trim();
+  log(env, chatId, "msg", `${userId}: ${text.slice(0, 120) || (msg.photo || msg.reply_to_message?.photo ? "[photo]" : "[empty]")}`);
 
   if (/^\/(start|help)/.test(text)) return send(env, chatId, HELP);
   if (text.startsWith("/id")) return send(env, chatId, `Your Telegram id: ${userId}\n(chat id: ${chatId})`);
 
   const allowed = (env.TELEGRAM_ALLOWED_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
   if (!allowed.length) {
+    log(env, chatId, "deny:nolist", `id=${userId}`);
     return send(env, chatId, `The bot has no allowlist configured yet. Your id is ${userId} — set TELEGRAM_ALLOWED_IDS in Cloudflare to unlock generation.`);
   }
   if (!allowed.includes(String(userId))) {
+    log(env, chatId, "deny", `id=${userId}`);
     return send(env, chatId, `Not authorized. Your id (${userId}) is not in the allowlist.`);
   }
-  if (!env.SENSENOVA_API_KEY) return send(env, chatId, "Server is missing SENSENOVA_API_KEY.");
+  if (!env.SENSENOVA_API_KEY) {
+    log(env, chatId, "err:noapikey", "");
+    return send(env, chatId, "Server is missing SENSENOVA_API_KEY.");
+  }
 
   if (text.startsWith("/")) return handleCommand(env, chatId, text);
 
@@ -195,6 +219,7 @@ async function handleCallback(cb, env) {
   if (!allowed.includes(String(userId))) return answer("Not authorized", true);
 
   const data = cb.data || "";
+  log(env, chatId, "cb", `${userId}: ${data}`);
   const [kind, key, value] = data.split(":");
   const s = settingsFor(chatId);
 
@@ -345,6 +370,7 @@ async function editPhoto(env, chatId, photoSizes, instruction, tokens) {
 
 async function runImageJob(env, chatId, { endpoint, label, payload }) {
   const { prompt, s, images } = payload;
+  log(env, chatId, "job", `${endpoint} ${s.model} ${s.size} ${s.output_format} wm=${s.watermark} ext=${s.prompt_extend} :: ${prompt.slice(0, 100)}`);
   const status = await send(env, chatId, label);
   const started = Date.now();
   try {
@@ -367,10 +393,12 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
     if (!res.ok) {
       let message = `HTTP ${res.status}`;
       try { message = JSON.parse(bodyText)?.error?.message || message; } catch {}
+      log(env, chatId, "upstream-err", `${res.status}: ${message}`);
       throw new Error(message);
     }
     const item = JSON.parse(bodyText)?.data?.[0];
     if (!item?.b64_json) throw new Error("The API returned no image data.");
+    log(env, chatId, "upstream-ok", `${((Date.now() - started) / 1000).toFixed(1)}s, ${Math.round(item.b64_json.length / 1024)} KB b64`);
 
     const mime = `image/${s.output_format}`;
     const bytes = base64ToBytes(item.b64_json);
@@ -386,7 +414,9 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
     const caption = `${clip(prompt, 700)}\n${tags} ${MODELS[s.model].name} · ${secs}s`;
     await sendImage(env, chatId, bytes, mime, caption);
     await deleteMessage(env, chatId, status);
+    log(env, chatId, "sent", `${Math.round(bytes.byteLength / 1024)} KB ${mime}`);
   } catch (err) {
+    log(env, chatId, "fail", err.message);
     await edit(env, chatId, status, `❌ ${err.message}`);
   }
 }

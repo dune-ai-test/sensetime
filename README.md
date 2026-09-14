@@ -131,6 +131,30 @@ work regardless.
    id - show my telegram id
    ```
 
+### Debugging with the /logs page
+
+The bot writes every step (message received, allowlist decision, job start,
+upstream status/timing, photo sent, any crash) to Cloudflare KV, and
+`https://<project>.pages.dev/logs` shows them — auto-refreshing, 7-day
+retention. One-time setup:
+
+1. Cloudflare dashboard → **Storage → KV → Create namespace** → name it
+   `nova-logs`.
+2. Pages project → **Settings → Functions (Integrations) → KV namespace
+   bindings** → add binding: **namespace** `nova-logs`, **variable name**
+   exactly `LOGS`. Redeploy/retry so the binding is live.
+3. Open `/logs` in a browser where you're signed in to the studio (uses the
+   same session cookie), or pass the webhook secret: `/logs?key=<TELEGRAM_WEBHOOK_SECRET>`.
+
+If `LOGS` is not bound, the bot still works — logging is silently skipped.
+
+**Silent generation? Reading the log tells you where it stops:**
+- nothing at all → webhook delivery issue (`getWebhookInfo` again)
+- `msg` then `deny`/`deny:nolist` → add your id to `TELEGRAM_ALLOWED_IDS`
+- `job` but no `upstream-ok` → SenseNova call failed or timed out (`upstream-err`
+  / `fail` has the message)
+- `upstream-ok` but no `sent` → Telegram refused the photo (`fail` has the reason)
+
 Security: the webhook verifies Telegram's `X-Telegram-Bot-Api-Secret-Token`
 header, so strangers POSTing to `/tg` are rejected; the allowlist gates
 generation. Commands like `/id` still answer anyone — harmless (their own id).
