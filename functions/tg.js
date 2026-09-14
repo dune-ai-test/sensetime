@@ -375,7 +375,15 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
     const mime = `image/${s.output_format}`;
     const bytes = base64ToBytes(item.b64_json);
     const secs = Math.max(1, Math.round((Date.now() - started) / 1000));
-    const caption = `${clip(prompt, 700)}\n${MODELS[s.model].name} · ${s.size} · ${secs}s${s.watermark ? " · wm" : ""}`;
+    const tags = [
+      `[${s.model === "sensenova-u1-fast" ? "fast" : "lite"}]`,
+      `[${s.size}]`,
+      `[${s.output_format}]`,
+      s.watermark ? "[watermark]" : "",
+      s.prompt_extend ? "" : "[noextend]",
+      images ? "[edit]" : "",
+    ].join("");
+    const caption = `${clip(prompt, 700)}\n${tags} ${MODELS[s.model].name} · ${secs}s`;
     await sendImage(env, chatId, bytes, mime, caption);
     await deleteMessage(env, chatId, status);
   } catch (err) {
