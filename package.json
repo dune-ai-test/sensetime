@@ -1,0 +1,13 @@
+{
+  "name": "nova-images",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Single-page SenseNova image generation app (Cloudflare Pages + Functions, or one Render web service).",
+  "scripts": {
+    "start": "node render/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
