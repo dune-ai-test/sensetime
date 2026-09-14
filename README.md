@@ -1,8 +1,12 @@
-# Nova Images — SenseNova image generation site
+# Nova Studio — SenseNova image generation site
 
-A single-page web app for generating and editing images through the
-[SenseNova](https://platform.sensenova.ai) API. The browser only ever talks to
-**your** backend; the API key never reaches the client.
+A **password-protected** single-page web app for generating and editing images
+through the [SenseNova](https://platform.sensenova.ai) API. The browser only
+ever talks to **your** backend; the SenseNova API key never reaches the client.
+
+**Nothing is stored server-side.** Functions are stateless relays — images
+pass through and are kept only in the visitor's browser session (a reload
+clears the gallery). Cloudflare never persists them.
 
 ```
 app/
@@ -10,12 +14,17 @@ app/
 │   ├── index.html
 │   └── app.js
 ├── functions/            # Option A: Cloudflare Pages Functions (recommended)
+│   ├── _shared/auth.js       # HMAC session cookie helpers
+│   ├── login.js              # POST /login  (password -> session cookie)
+│   ├── logout.js             # POST /logout
+│   ├── me.js                 # GET  /me     (signed-in check)
 │   └── api/
+│       ├── _middleware.js    # requires the session cookie for all /api/*
 │       ├── generate.js       # POST /api/generate
 │       └── proxy-image.js    # GET  /api/proxy-image
 ├── render/               # Option B: one tiny Node server for Render
-│   └── server.js
-└── package.json          # Option B only (zero dependencies)
+│   └── server.js         # same routes incl. auth, zero dependencies
+└── package.json          # Option B only
 ```
 
 ## What it supports (from the SenseNova docs)
@@ -52,9 +61,9 @@ app/
    - **Build output directory:** `public`
 4. Save & deploy. Pages automatically picks up the `functions/` folder —
    no extra configuration.
-5. **Settings → Environment variables → Add**:
-   - `SENSENOVA_API_KEY` = your `sk-...` key (add it to *Production* and
-     *Preview*).
+5. **Settings → Environment variables → Add** (as **Secrets**, both variables, Production + Preview):
+   - `SENSENOVA_API_KEY` = your `sk-...` key
+   - `LOGIN_PASSWORD` = the password visitors must enter (pick something strong — it is the only gate)
 6. Redeploy (or trigger a deploy) so the variable is live.
 
 Local testing (optional): `npx wrangler pages dev .` with the key set, then
@@ -71,7 +80,8 @@ zero npm dependencies, so Render's free tier works fine.
    - **Runtime:** Node
    - **Build command:** *(empty — nothing to build)*
    - **Start command:** `node render/server.js`
-   - **Environment variables:** `SENSENOVA_API_KEY` = your `sk-...` key
+   - **Environment variables:** `SENSENOVA_API_KEY` = your `sk-...` key and
+     `LOGIN_PASSWORD` = your chosen access password
 4. Deploy. Render reads `PORT` from its environment automatically.
 
 > Note: Render's free tier sleeps after 15 min of inactivity, so the first
@@ -91,3 +101,12 @@ zero npm dependencies, so Render's free tier works fine.
   not an open proxy.
 - 429s from SenseNova (quota exhausted) are passed through with a clear
   message, matching the docs' "retry with exponential backoff" advice.
+- **Login:** one shared password (`LOGIN_PASSWORD`). A correct sign-in sets an
+  HttpOnly, SameSite=Lax, `Secure` cookie valid 30 days whose value is
+  `HMAC-SHA256(LOGIN_PASSWORD)` of a fixed string — stateless, unguessable
+  without the password, and `/api/*` middleware rejects anyone without it.
+  Failed attempts are throttled best-effort (25/10 min/IP), so treat the
+  password itself as the real defense. Note: the site itself (HTML/JS) is
+  still publicly fetchable by design — only generation is gated.
+- **Storage:** none. No images, prompts, or keys are persisted anywhere on
+  Cloudflare; the gallery exists only in the open browser tab.

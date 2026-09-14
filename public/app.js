@@ -1,234 +1,391 @@
-/* Nova Images — frontend for the /api/generate proxy (Cloudflare Pages Function or Render service) */
+/* Nova Studio — frontend. Talks only to same-origin routes:
+ *   POST /login  POST /logout  GET /me  POST /api/generate  GET /api/proxy-image
+ */
 
 const MODELS = {
   "sensenova-u1.5-lite": {
-    label: "U1.5 Lite — generation + editing",
+    name: "U1.5 Lite",
+    desc: "Generation & instruction-based editing",
+    tag: "Edit",
     edit: true,
-    sizes: ["auto", "2048x2048", "2720x1536", "1536x2720", "1664x2496", "2496x1664", "4096x4096", "1024x1024"],
+    sizes: ["auto", "2048x2048", "2720x1536", "1536x2720", "1664x2496", "2496x1664", "1024x1024", "4096x4096"],
   },
   "sensenova-u1-fast": {
-    label: "U1 Fast — infographics (generation only)",
+    name: "U1 Fast",
+    desc: "Infographics — text-to-image only",
+    tag: "2K",
     edit: false,
     sizes: ["auto", "2048x2048", "2752x1536", "3072x1376"],
   },
 };
 
 const $ = (id) => document.getElementById(id);
-const els = {
-  model: $("model"), size: $("size"), format: $("format"), prompt: $("prompt"),
-  promptExtend: $("promptExtend"), watermark: $("watermark"), go: $("go"),
-  status: $("status"), gallery: $("gallery"), empty: $("empty"),
-  tabGenerate: $("tabGenerate"), tabEdit: $("tabEdit"), editInputs: $("editInputs"),
-  drop: $("drop"), file: $("file"), thumbs: $("thumbs"),
+const el = {
+  modelList: $("modelList"), sizeChips: $("sizeChips"), format: $("format"),
+  prompt: $("prompt"), promptExtend: $("promptExtend"), watermark: $("watermark"),
+  go: $("go"), goLabel: $("goLabel"), status: $("status"),
+  gallery: $("gallery"), empty: $("empty"), count: $("count"), clearAll: $("clearAll"),
+  tabGenerate: $("tabGenerate"), tabEdit: $("tabEdit"), editBlock: $("editBlock"),
+  dropzone: $("dropzone"), file: $("file"), thumbs: $("thumbs"),
+  login: $("login"), loginCard: $("loginCard"), loginForm: $("loginForm"),
+  password: $("password"), loginBtn: $("loginBtn"), loginErr: $("loginErr"),
+  signOut: $("signOut"), lightbox: $("lightbox"), lightboxImg: $("lightboxImg"),
+  toasts: $("toasts"),
 };
 
-let mode = "generate"; // or "edit"
+let mode = "generate";
+let model = Object.keys(MODELS)[0];
+let size = MODELS[model].sizes[0];
 let sources = []; // { name, dataUrl }
+let imgCount = 0;
+let busy = false;
 
-/* ---------- controls ---------- */
+/* ---------- toasts ---------- */
 
-function fillModels() {
-  els.model.innerHTML = "";
+function toast(msg, kind = "", ms = 4200) {
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.textContent = msg;
+  el.toasts.appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+
+function setHint(text, kind = "") {
+  el.status.className = "hint" + (kind ? " " + kind : "");
+  el.status.textContent = text;
+}
+
+/* ---------- auth ---------- */
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { credentials: "same-origin", ...opts });
+  if (res.status === 401 && path !== "/login") {
+    showLogin();
+    throw new Error("Session expired — sign in again.");
+  }
+  return res;
+}
+
+function showLogin() {
+  el.login.classList.remove("hidden");
+  el.signOut.hidden = true;
+  setTimeout(() => el.password.focus(), 50);
+}
+
+function enterStudio() {
+  el.login.classList.add("hidden");
+  el.signOut.hidden = false;
+  el.loginErr.textContent = "";
+  el.password.value = "";
+}
+
+el.loginForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (busy) return;
+  busy = true;
+  el.loginBtn.disabled = true;
+  el.loginBtn.innerHTML = '<span class="spin"></span>';
+  try {
+    const res = await fetch("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: el.password.value }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      el.loginErr.textContent = data?.error?.message || "Sign-in failed.";
+      el.loginCard.classList.remove("shake");
+      void el.loginCard.offsetWidth; // restart animation
+      el.loginCard.classList.add("shake");
+      return;
+    }
+    enterStudio();
+  } catch (err) {
+    el.loginErr.textContent = String(err.message || err);
+  } finally {
+    el.loginBtn.disabled = false;
+    el.loginBtn.innerHTML = "<span>Enter studio</span>";
+    busy = false;
+  }
+});
+
+el.signOut.addEventListener("click", async () => {
+  await fetch("/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+  showLogin();
+});
+
+/* ---------- composer controls ---------- */
+
+function renderModels() {
+  el.modelList.innerHTML = "";
   for (const [id, m] of Object.entries(MODELS)) {
-    const o = document.createElement("option");
-    o.value = id;
-    o.textContent = m.label;
-    els.model.appendChild(o);
-  }
-  fillSizes();
-  syncModeAvailability();
-}
-
-function fillSizes() {
-  const sizes = MODELS[els.model.value].sizes;
-  els.size.innerHTML = "";
-  for (const s of sizes) {
-    const o = document.createElement("option");
-    o.value = s;
-    o.textContent = s === "auto" ? "Auto" : s;
-    els.size.appendChild(o);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "model-card" + (id === model ? " sel" : "");
+    b.innerHTML = `<span class="model-radio"></span><span><b>${m.name}</b><span>${m.desc}</span></span><span class="tag">${m.tag}</span>`;
+    b.addEventListener("click", () => {
+      model = id;
+      size = MODELS[id].sizes[0];
+      if (!m.edit && mode === "edit") setMode("generate");
+      renderModels();
+      renderSizes();
+      el.tabEdit.disabled = !m.edit;
+    });
+    el.modelList.appendChild(b);
   }
 }
 
-function syncModeAvailability() {
-  const canEdit = MODELS[els.model.value].edit;
-  els.tabEdit.disabled = !canEdit;
-  els.tabEdit.style.opacity = canEdit ? 1 : 0.4;
-  if (!canEdit && mode === "edit") setMode("generate");
+function renderSizes() {
+  el.sizeChips.innerHTML = "";
+  for (const s of MODELS[model].sizes) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (s === size ? " on" : "");
+    b.textContent = s === "auto" ? "Auto" : s.replace("x", " × ");
+    b.addEventListener("click", () => { size = s; renderSizes(); });
+    el.sizeChips.appendChild(b);
+  }
 }
 
 function setMode(m) {
   mode = m;
-  els.tabGenerate.classList.toggle("active", m === "generate");
-  els.tabEdit.classList.toggle("active", m === "edit");
-  els.editInputs.style.display = m === "edit" ? "block" : "none";
-  els.go.textContent = m === "edit" ? "Edit image" : "Create image";
-  els.prompt.placeholder = m === "edit"
-    ? "Make it a winter scene with falling snow and warm window lights"
-    : "A serene Japanese garden at dusk, stone lanterns glowing, koi pond reflections, cinematic lighting";
+  el.tabGenerate.classList.toggle("on", m === "generate");
+  el.tabEdit.classList.toggle("on", m === "edit");
+  el.editBlock.hidden = m !== "edit";
+  el.goLabel.textContent = m === "edit" ? "Apply edit" : "Create image";
+  el.prompt.placeholder = m === "edit"
+    ? "Instruction for the source image(s), e.g. “remove the background”, “make it snow”…"
+    : "e.g. A serene Japanese garden at dusk, stone lanterns glowing, koi pond reflections, cinematic lighting";
 }
 
-els.model.addEventListener("change", () => { fillSizes(); syncModeAvailability(); });
-els.tabGenerate.addEventListener("click", () => setMode("generate"));
-els.tabEdit.addEventListener("click", () => { if (!els.tabEdit.disabled) setMode("edit"); });
+el.tabGenerate.addEventListener("click", () => setMode("generate"));
+el.tabEdit.addEventListener("click", () => { if (!el.tabEdit.disabled) setMode("edit"); });
 
-/* ---------- image sources (edit mode) ---------- */
+/* ---------- source images (edit mode) ---------- */
 
 function addFiles(list) {
   for (const f of list) {
     if (!f.type.startsWith("image/")) continue;
     const r = new FileReader();
-    r.onload = () => {
-      sources.push({ name: f.name, dataUrl: r.result });
-      renderThumbs();
-    };
+    r.onload = () => { sources.push({ name: f.name, dataUrl: r.result }); renderThumbs(); };
     r.readAsDataURL(f);
   }
 }
 
 function renderThumbs() {
-  els.thumbs.innerHTML = "";
+  el.thumbs.innerHTML = "";
   sources.forEach((s, i) => {
     const wrap = document.createElement("span");
-    wrap.style.position = "relative";
+    wrap.className = "thumb";
     const img = document.createElement("img");
     img.src = s.dataUrl;
     img.title = s.name;
-    const x = document.createElement("span");
+    const x = document.createElement("button");
+    x.type = "button";
     x.textContent = "×";
-    x.style.cssText = "position:absolute;top:-6px;right:-6px;background:#ff6d7a;color:#fff;border-radius:50%;width:18px;height:18px;font-size:12px;line-height:18px;text-align:center;cursor:pointer";
-    x.onclick = () => { sources.splice(i, 1); renderThumbs(); };
+    x.addEventListener("click", () => { sources.splice(i, 1); renderThumbs(); });
     wrap.append(img, x);
-    els.thumbs.appendChild(wrap);
+    el.thumbs.appendChild(wrap);
   });
 }
 
-els.drop.addEventListener("click", () => els.file.click());
-els.file.addEventListener("change", () => addFiles(els.file.files));
-els.drop.addEventListener("dragover", (e) => { e.preventDefault(); els.drop.classList.add("over"); });
-els.drop.addEventListener("dragleave", () => els.drop.classList.remove("over"));
-els.drop.addEventListener("drop", (e) => {
+el.dropzone.addEventListener("click", () => el.file.click());
+el.file.addEventListener("change", () => addFiles(el.file.files));
+el.dropzone.addEventListener("dragover", (e) => { e.preventDefault(); el.dropzone.classList.add("over"); });
+el.dropzone.addEventListener("dragleave", () => el.dropzone.classList.remove("over"));
+el.dropzone.addEventListener("drop", (e) => {
   e.preventDefault();
-  els.drop.classList.remove("over");
+  el.dropzone.classList.remove("over");
   addFiles(e.dataTransfer.files);
 });
 
-/* ---------- generate ---------- */
-
-function setStatus(text, kind) {
-  els.status.className = "status" + (kind ? " " + kind : "");
-  els.status.innerHTML = text;
-}
+/* ---------- generation ---------- */
 
 async function run() {
-  const prompt = els.prompt.value.trim();
-  if (!prompt) return setStatus("Enter a prompt first.", "err");
-  if (mode === "edit") {
-    if (!sources.length) return setStatus("Add at least one source image in Edit mode.", "err");
-    if (!MODELS[els.model.value].edit) return setStatus("This model does not support editing.", "err");
-  }
+  if (busy) return;
+  const prompt = el.prompt.value.trim();
+  if (!prompt) { setHint("Enter a prompt first.", "err"); return; }
+  if (mode === "edit" && !sources.length) { setHint("Add at least one source image.", "err"); return; }
 
-  els.go.disabled = true;
-  setStatus('<span class="spinner"></span>Generating… this can take 10–60 seconds.', "busy");
+  busy = true;
+  el.go.disabled = true;
+  el.go.insertAdjacentHTML("afterbegin", '<span class="spin"></span>');
+  setHint("Generating — 10 to 60 s depending on size…");
   const slot = addSkeleton();
 
-  const body = {
+  const req = {
     mode,
-    model: els.model.value,
+    model,
     prompt,
-    size: els.size.value,
+    size,
     n: 1,
-    output_format: els.format.value,
+    output_format: el.format.value,
     response_format: "b64_json",
-    watermark: els.watermark.checked,
-    prompt_extend: els.promptExtend.checked,
+    watermark: el.watermark.checked,
+    prompt_extend: el.promptExtend.checked,
   };
-  if (mode === "edit") body.images = sources.map((s) => ({ image_url: s.dataUrl }));
+  if (mode === "edit") req.images = sources.map((s) => ({ image_url: s.dataUrl }));
 
   try {
-    const res = await fetch("api/generate", {
+    const res = await api("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(req),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.error?.message || data?.message || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
 
-    const items = data?.data || [];
     slot.remove();
+    const items = data?.data || [];
     if (!items.length) throw new Error("The API returned no images.");
     for (const item of items) {
       const src = item.b64_json
-        ? `data:image/${els.format.value === "jpeg" ? "jpeg" : els.format.value};base64,${item.b64_json}`
-        : item.url;
-      addCard(src, body);
+        ? `data:image/${req.output_format === "jpeg" ? "jpeg" : req.output_format};base64,${item.b64_json}`
+        : item.url; // legacy path; proxy-image will cover downloads
+      addTile(src, req);
     }
-    setStatus(`Done — ${items.length} image${items.length > 1 ? "s" : ""} created.`, "ok");
+    setHint(`Done — ${items.length} image${items.length > 1 ? "s" : ""} added.`, "ok");
   } catch (err) {
     slot.remove();
-    setStatus(String(err.message || err), "err");
+    const msg = String(err.message || err);
+    setHint(msg, "err");
+    toast(msg, "err");
   } finally {
-    els.go.disabled = false;
+    busy = false;
+    el.go.disabled = false;
+    el.go.querySelector(".spin")?.remove();
   }
 }
 
-els.go.addEventListener("click", run);
-els.prompt.addEventListener("keydown", (e) => {
+el.go.addEventListener("click", run);
+el.prompt.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run();
 });
 
 /* ---------- gallery ---------- */
 
-function addSkeleton() {
-  els.empty?.remove();
-  const el = document.createElement("div");
-  el.className = "skeleton";
-  els.gallery.prepend(el);
-  return el;
+function refreshCount() {
+  imgCount = el.gallery.querySelectorAll(".tile").length;
+  el.count.textContent = imgCount ? `${imgCount} image${imgCount > 1 ? "s" : ""}` : "";
+  el.clearAll.hidden = !imgCount;
 }
 
-function addCard(src, req) {
-  els.empty?.remove();
+function addSkeleton() {
+  el.empty?.remove();
+  const d = document.createElement("div");
+  d.className = "skeleton";
+  el.gallery.prepend(d);
+  return d;
+}
+
+function addTile(src, req) {
+  el.empty?.remove();
   const fig = document.createElement("figure");
+  fig.className = "tile";
+
+  const holder = document.createElement("div");
+  holder.className = "tile-img";
   const img = document.createElement("img");
   img.src = src;
   img.loading = "lazy";
-  const cap = document.createElement("figcaption");
+  img.addEventListener("click", () => openLightbox(src));
+
+  const veil = document.createElement("div");
+  veil.className = "veil";
+
+  const dl = mkBtn("Download");
+  dl.addEventListener("click", () => download(src, req));
+  const reuse = mkBtn("Reuse prompt");
+  reuse.addEventListener("click", () => { el.prompt.value = req.prompt; el.prompt.focus(); });
+  if (MODELS[req.model].edit) {
+    const use = mkBtn("Use as source");
+    use.addEventListener("click", async () => {
+      sources.push({ name: "gallery image", dataUrl: await toDataUrl(src) });
+      renderThumbs();
+      setMode("edit");
+      toast("Added to Edit sources.");
+    });
+    veil.appendChild(use);
+  }
+  veil.append(reuse, dl);
+  holder.append(img, veil);
+
+  const foot = document.createElement("figcaption");
+  foot.className = "tile-foot";
   const p = document.createElement("p");
   p.textContent = req.prompt;
   p.title = req.prompt;
   const meta = document.createElement("div");
-  meta.className = "meta";
-  meta.innerHTML = `<span>${req.model.replace("sensenova-", "")} · ${req.size}</span>`;
-  const actions = document.createElement("div");
-  actions.className = "actions";
+  meta.className = "tile-meta";
+  meta.innerHTML = `<span class="m">${MODELS[req.model].name}</span><span class="m">${req.size}</span>` +
+    (req.mode === "edit" ? `<span class="m">edit</span>` : "") +
+    `<time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>`;
+  foot.append(p, meta);
 
-  const dl = document.createElement("a");
-  dl.textContent = "Download";
-  dl.addEventListener("click", async () => {
-    let blob;
-    if (src.startsWith("data:")) blob = await (await fetch(src)).blob();
-    else blob = await (await fetch("api/proxy-image?url=" + encodeURIComponent(src))).blob();
+  fig.append(holder, foot);
+  el.gallery.prepend(fig);
+  refreshCount();
+}
+
+function mkBtn(text) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = text;
+  return b;
+}
+
+async function toDataUrl(src) {
+  if (src.startsWith("data:")) return src;
+  const blob = await (await api("/api/proxy-image?url=" + encodeURIComponent(src))).blob();
+  return new Promise((res) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.readAsDataURL(blob);
+  });
+}
+
+async function download(src, req) {
+  try {
+    const blob = src.startsWith("data:")
+      ? await (await fetch(src)).blob()
+      : await (await api("/api/proxy-image?url=" + encodeURIComponent(src))).blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `nova-${Date.now()}.${req.output_format}`;
     a.click();
     URL.revokeObjectURL(a.href);
-  });
-
-  const again = document.createElement("a");
-  again.textContent = "Reuse prompt";
-  again.addEventListener("click", () => {
-    els.prompt.value = req.prompt;
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
-
-  actions.append(dl, again);
-  cap.append(p, meta);
-  cap.appendChild(actions);
-  fig.append(img, cap);
-  els.gallery.prepend(fig);
+  } catch (err) {
+    toast(err.message, "err");
+  }
 }
 
+el.clearAll.addEventListener("click", () => {
+  el.gallery.querySelectorAll(".tile").forEach((t) => t.remove());
+  if (!el.gallery.children.length) location.reload();
+  refreshCount();
+});
+
+/* ---------- lightbox ---------- */
+
+function openLightbox(src) {
+  el.lightboxImg.src = src;
+  el.lightbox.classList.add("open");
+}
+el.lightbox.addEventListener("click", () => el.lightbox.classList.remove("open"));
+addEventListener("keydown", (e) => { if (e.key === "Escape") el.lightbox.classList.remove("open"); });
+
 /* ---------- init ---------- */
-fillModels();
+
+(async function init() {
+  renderModels();
+  renderSizes();
+  setMode("generate");
+  try {
+    const res = await fetch("/me", { credentials: "same-origin" });
+    const data = await res.json().catch(() => ({}));
+    if (data?.signedIn) enterStudio();
+    else showLogin();
+  } catch {
+    showLogin(); // can't reach the server; make them sign in anyway
+  }
+})();

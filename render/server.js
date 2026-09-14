@@ -1,21 +1,41 @@
-/* Nova Images — single-server build for Render (Web Service).
- * Serves the static frontend AND mirrors the Cloudflare Pages Functions:
- *   POST /api/generate      -> SenseNova /v1/images/{generations|edits}
- *   GET  /api/proxy-image   -> safe passthrough of sensenova CDN images
- * Reads SENSENOVA_API_KEY from the environment. Zero npm dependencies:
- * Node's built-in fetch/http only, so `npm install` never breaks.
+/* Nova Studio — single-server build for Render (Web Service).
+ * Serves the static frontend AND mirrors the Cloudflare Pages routes:
+ *   POST /login            -> verify shared password, set session cookie
+ *   POST /logout           -> clear cookie
+ *   GET  /me               -> { signedIn }
+ *   POST /api/generate     -> SenseNova /v1/images/{generations|edits}  (auth required)
+ *   GET  /api/proxy-image  -> safe passthrough of sensenova CDN images   (auth required)
+ * Env: SENSENOVA_API_KEY, LOGIN_PASSWORD. Zero npm dependencies.
  */
 
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const PUBLIC_DIR = join(ROOT, "..", "public"); // static frontend, shared with Cloudflare
+const PUBLIC_DIR = join(ROOT, "..", "public");
 const UPSTREAM = "https://token.sensenova.ai/v1/images";
 const PORT = process.env.PORT || 8787;
 const KEY = process.env.SENSENOVA_API_KEY || "";
+const PASSWORD = process.env.LOGIN_PASSWORD || "";
+const SESSION_COOKIE = "nova_session";
+
+const hmac = (pwd) => createHmac("sha256", String(pwd)).update("nova-session-v1").digest("hex");
+
+function sessionOk(req) {
+  if (!PASSWORD) return false;
+  const header = req.headers.cookie || "";
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1 || part.slice(0, eq).trim() !== SESSION_COOKIE) continue;
+    const given = Buffer.from(part.slice(eq + 1).trim());
+    const want = Buffer.from(hmac(PASSWORD));
+    return given.length === want.length && timingSafeEqual(given, want);
+  }
+  return false;
+}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -27,15 +47,26 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
 };
 
-const sendJson = (res, status, obj) => {
+const sendJson = (res, status, obj, extraHeaders = {}) => {
   const body = JSON.stringify(obj);
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
-    "Access-Control-Allow-Origin": "*",
-  });
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body), ...extraHeaders });
   res.end(body);
 };
+
+const sessionCookie = (token, maxAge) =>
+  `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+
+async function handleLogin(req, res) {
+  if (!PASSWORD) return sendJson(res, 500, { error: { message: "Server is missing the LOGIN_PASSWORD environment variable." } });
+  let body;
+  try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: { message: e.message } }); }
+  const given = Buffer.from(String(body.password || ""));
+  const want = Buffer.from(PASSWORD);
+  if (given.length === want.length && timingSafeEqual(given, want)) {
+    return sendJson(res, 200, { ok: true }, { "Set-Cookie": sessionCookie(hmac(PASSWORD), 60 * 60 * 24 * 30) });
+  }
+  return sendJson(res, 401, { error: { message: "Incorrect password." } });
+}
 
 const readJsonBody = (req) =>
   new Promise((fulfill, reject) => {
@@ -124,7 +155,6 @@ async function handleProxyImage(req, res, url) {
     res.writeHead(200, {
       "Content-Type": upstream.headers.get("content-type") || "image/png",
       "Content-Length": buf.length,
-      "Access-Control-Allow-Origin": "*",
       "Cache-Control": "public, max-age=60",
     });
     res.end(buf);
@@ -134,8 +164,7 @@ async function handleProxyImage(req, res, url) {
 }
 
 async function serveStatic(res, pathname) {
-  let file = pathname === "/" ? "/index.html" : pathname;
-  // Resolve inside PUBLIC_DIR only; reject anything that tries to escape.
+  const file = pathname === "/" ? "/index.html" : pathname;
   const abs = normalize(join(PUBLIC_DIR, file));
   if (!abs.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end("Forbidden"); }
   try {
@@ -145,7 +174,6 @@ async function serveStatic(res, pathname) {
     res.writeHead(200, { "Content-Type": MIME[extname(abs)] || "application/octet-stream" });
     res.end(data);
   } catch {
-    // SPA-ish fallback to index for unknown non-asset paths
     try {
       const data = await readFile(join(PUBLIC_DIR, "index.html"));
       res.writeHead(200, { "Content-Type": MIME[".html"] });
@@ -159,16 +187,18 @@ async function serveStatic(res, pathname) {
 
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (req.method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    });
-    return res.end();
+  const p = url.pathname;
+  if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
+
+  if (p === "/login" && req.method === "POST") return handleLogin(req, res);
+  if (p === "/logout" && req.method === "POST") return sendJson(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", 0) });
+  if (p === "/me") return sendJson(res, 200, { signedIn: sessionOk(req) });
+
+  if (p.startsWith("/api/")) {
+    if (!sessionOk(req)) return sendJson(res, 401, { error: { message: "Not signed in.", code: 401 } });
+    if (p === "/api/generate" && req.method === "POST") return handleGenerate(req, res);
+    if (p === "/api/proxy-image" && req.method === "GET") return handleProxyImage(req, res, url);
+    return sendJson(res, 404, { error: { message: "Unknown API route." } });
   }
-  if (url.pathname === "/api/generate" && req.method === "POST") return handleGenerate(req, res);
-  if (url.pathname === "/api/proxy-image" && req.method === "GET") return handleProxyImage(req, res, url);
-  if (url.pathname.startsWith("/api/")) return sendJson(res, 404, { error: { message: "Unknown API route." } });
-  return serveStatic(res, decodeURIComponent(url.pathname));
-}).listen(PORT, () => console.log(`Nova Images on http://localhost:${PORT}`));
+  return serveStatic(res, decodeURIComponent(p));
+}).listen(PORT, () => console.log(`Nova Studio on http://localhost:${PORT}`));
