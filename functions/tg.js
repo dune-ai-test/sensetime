@@ -30,11 +30,11 @@ const SIZE_RULES = {
 };
 
 const DEFAULTS = () => ({
-  // U1 Fast at its fixed 2K canvas is the accelerated path — comfortably
-  // under the 30 s function wall (Lite often needs 25-30+ s). Switch with
-  // /model or a [lite] tag; note edits always run Lite and can be slow.
-  model: "sensenova-u1-fast",
-  size: "2048x2048",
+  // Wall-clock wait on the API is fine — the old killer was CPU time spent
+  // decoding base64, now avoided by sending Telegram the CDN url. Lite is
+  // the best-quality general model; pick Fast via /model if you like it.
+  model: "sensenova-u1.5-lite",
+  size: "auto",
   output_format: "png",
   watermark: false,
   prompt_extend: true,
@@ -204,7 +204,7 @@ async function handleCommand(env, chatId, text) {
       return send(env, chatId, settingsLine(s));
     case "/reset":
       CHATS.set(chatId, { ...DEFAULTS(), ts: Date.now() });
-      return send(env, chatId, "Defaults restored (U1 Fast · 2048x2048 · png · no watermark · rewrite on).");
+      return send(env, chatId, "Defaults restored (U1.5 Lite · auto · png · no watermark · rewrite on).");
     default:
       return send(env, chatId, "Unknown command. Try /start");
   }
@@ -386,7 +386,9 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
         size: s.size,
         n: 1,
         output_format: s.output_format,
-        response_format: "b64_json",
+        response_format: "url", // Telegram downloads the CDN link itself — no
+        // base64 decoding in the Worker, which was burning all the CPU budget
+        // and got the function killed right after upstream-ok.
         watermark: s.watermark,
         prompt_extend: s.prompt_extend,
         ...(images ? { images } : {}),
@@ -400,11 +402,9 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
       throw new Error(message);
     }
     const item = JSON.parse(bodyText)?.data?.[0];
-    if (!item?.b64_json) throw new Error("The API returned no image data.");
-    log(env, chatId, "upstream-ok", `${((Date.now() - started) / 1000).toFixed(1)}s, ${Math.round(item.b64_json.length / 1024)} KB b64`);
+    if (!item?.url && !item?.b64_json) throw new Error("The API returned no image data.");
+    log(env, chatId, "upstream-ok", `${((Date.now() - started) / 1000).toFixed(1)}s, ${item.url ? "cdn url" : `${Math.round(item.b64_json.length / 1024)} KB b64`}`);
 
-    const mime = `image/${s.output_format}`;
-    const bytes = base64ToBytes(item.b64_json);
     const secs = Math.max(1, Math.round((Date.now() - started) / 1000));
     const tags = [
       `[${s.model === "sensenova-u1-fast" ? "fast" : "lite"}]`,
@@ -415,9 +415,15 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
       images ? "[edit]" : "",
     ].join("");
     const caption = `${clip(prompt, 700)}\n${tags} ${MODELS[s.model].name} · ${secs}s`;
-    await sendImage(env, chatId, bytes, mime, caption);
+    try {
+      await sendImage(env, chatId, item.url, `image/${s.output_format}`, caption);
+    } catch (err) {
+      if (!item.b64_json) throw err; // nothing to fall back to; rethrow
+      log(env, chatId, "fallback", `url send failed (${clip(err.message, 120)}) — uploading bytes`);
+      await sendImage(env, chatId, base64ToBytes(item.b64_json), `image/${s.output_format}`, caption);
+    }
     await deleteMessage(env, chatId, status);
-    log(env, chatId, "sent", `${Math.round(bytes.byteLength / 1024)} KB ${mime}`);
+    log(env, chatId, "sent", `${s.output_format} ${item.url ? "via url" : "via bytes"}`);
   } catch (err) {
     log(env, chatId, "fail", err.message);
     await edit(env, chatId, status, `❌ ${err.message}`);
@@ -451,15 +457,21 @@ const edit = (env, chatId, messageId, text) =>
 const deleteMessage = (env, chatId, messageId) =>
   messageId ? tgJson(env, "deleteMessage", { chat_id: chatId, message_id: messageId }) : Promise.resolve();
 
-async function sendImage(env, chatId, bytes, mime, caption) {
+/* photo: CDN URL string (preferred — Telegram fetches it, zero Worker CPU)
+ * or a Uint8Array (fallback; large uploads can hit the CPU limit). */
+async function sendImage(env, chatId, photo, mime, caption) {
+  const asUrl = typeof photo === "string";
   // Telegram: photos cap at 5 MB upload; documents allow 20 MB.
-  const asFile = bytes.byteLength > 4_500_000;
-  const method = asFile ? "sendDocument" : "sendPhoto";
+  const asFile = !asUrl && photo.byteLength > 4_500_000;
+  const method = asUrl || !asFile ? "sendPhoto" : "sendDocument";
   const form = new FormData();
   form.append("chat_id", String(chatId));
   form.append("caption", clip(caption, 1000));
-  const ext = mime.split("/")[1];
-  form.append(asFile ? "document" : "photo", new File([bytes], `nova.${ext}`, { type: mime }));
+  if (asUrl) form.append("photo", photo);
+  else {
+    const ext = mime.split("/")[1];
+    form.append(asFile ? "document" : "photo", new File([photo], `nova.${ext}`, { type: mime }));
+  }
   const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, { method: "POST", body: form });
   const data = await res.json().catch(() => ({}));
   if (!data.ok) throw new Error(`sendImage failed: ${data.description || res.status}`);
