@@ -31,7 +31,9 @@ const SIZE_RULES = {
 
 const DEFAULTS = () => ({
   model: "sensenova-u1.5-lite",
-  size: "auto",
+  // 1024 renders in well under the 30 s function wall; "auto" can pick huge
+  // slow canvases and gets the job killed. Bump via /size or [WxH] tags.
+  size: "1024x1024",
   output_format: "png",
   watermark: false,
   prompt_extend: true,
