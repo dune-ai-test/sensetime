@@ -30,10 +30,11 @@ const SIZE_RULES = {
 };
 
 const DEFAULTS = () => ({
-  model: "sensenova-u1.5-lite",
-  // 1024 renders in well under the 30 s function wall; "auto" can pick huge
-  // slow canvases and gets the job killed. Bump via /size or [WxH] tags.
-  size: "1024x1024",
+  // U1 Fast at its fixed 2K canvas is the accelerated path — comfortably
+  // under the 30 s function wall (Lite often needs 25-30+ s). Switch with
+  // /model or a [lite] tag; note edits always run Lite and can be slow.
+  model: "sensenova-u1-fast",
+  size: "2048x2048",
   output_format: "png",
   watermark: false,
   prompt_extend: true,
@@ -203,7 +204,7 @@ async function handleCommand(env, chatId, text) {
       return send(env, chatId, settingsLine(s));
     case "/reset":
       CHATS.set(chatId, { ...DEFAULTS(), ts: Date.now() });
-      return send(env, chatId, "Defaults restored (lite · auto · png · no watermark · rewrite on).");
+      return send(env, chatId, "Defaults restored (U1 Fast · 2048x2048 · png · no watermark · rewrite on).");
     default:
       return send(env, chatId, "Unknown command. Try /start");
   }
