@@ -386,9 +386,7 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
         size: s.size,
         n: 1,
         output_format: s.output_format,
-        response_format: "url", // Telegram downloads the CDN link itself — no
-        // base64 decoding in the Worker, which was burning all the CPU budget
-        // and got the function killed right after upstream-ok.
+        response_format: "b64_json",
         watermark: s.watermark,
         prompt_extend: s.prompt_extend,
         ...(images ? { images } : {}),
@@ -402,10 +400,11 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
       throw new Error(message);
     }
     const item = JSON.parse(bodyText)?.data?.[0];
-    if (!item?.url && !item?.b64_json) throw new Error("The API returned no image data.");
-    log(env, chatId, "upstream-ok", `${((Date.now() - started) / 1000).toFixed(1)}s, ${item.url ? "cdn url" : `${Math.round(item.b64_json.length / 1024)} KB b64`}`);
+    if (!item?.b64_json && !item?.url) throw new Error("The API returned no image data.");
+    log(env, chatId, "upstream-ok", `${((Date.now() - started) / 1000).toFixed(1)}s, ${item.b64_json ? `${Math.round(item.b64_json.length / 1024)} KB b64` : "cdn url"}`);
 
     const secs = Math.max(1, Math.round((Date.now() - started) / 1000));
+    const mime = `image/${s.output_format}`;
     const tags = [
       `[${s.model === "sensenova-u1-fast" ? "fast" : "lite"}]`,
       `[${s.size}]`,
@@ -415,15 +414,17 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
       images ? "[edit]" : "",
     ].join("");
     const caption = `${clip(prompt, 700)}\n${tags} ${MODELS[s.model].name} · ${secs}s`;
-    try {
-      await sendImage(env, chatId, item.url, `image/${s.output_format}`, caption);
-    } catch (err) {
-      if (!item.b64_json) throw err; // nothing to fall back to; rethrow
-      log(env, chatId, "fallback", `url send failed (${clip(err.message, 120)}) — uploading bytes`);
-      await sendImage(env, chatId, base64ToBytes(item.b64_json), `image/${s.output_format}`, caption);
+    if (item.b64_json) {
+      // Native data-URL decode — the old manual charCodeAt loop over 2M+
+      // chars exhausted the Worker's CPU budget and killed the function.
+      const bytes = await base64ToBytes(item.b64_json);
+      await sendImage(env, chatId, bytes, mime, caption);
+      log(env, chatId, "sent", `${Math.round(bytes.byteLength / 1024)} KB via bytes`);
+    } else {
+      await sendImage(env, chatId, item.url, mime, caption);
+      log(env, chatId, "sent", "via url");
     }
     await deleteMessage(env, chatId, status);
-    log(env, chatId, "sent", `${s.output_format} ${item.url ? "via url" : "via bytes"}`);
   } catch (err) {
     log(env, chatId, "fail", err.message);
     await edit(env, chatId, status, `❌ ${err.message}`);
@@ -491,11 +492,13 @@ async function tgJson(env, method, payload) {
 
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
-function base64ToBytes(b64) {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
-  return out;
+/* Decode via the runtime's native data-URL handler: fast and CPU-cheap.
+ * The previous charCodeAt loop burned ~300 ms on 2 MB images — over the
+ * free-plan CPU limit, silently killing the function after upstream-ok. */
+async function base64ToBytes(b64) {
+  const res = await fetch(`data:application/octet-stream;base64,${b64}`);
+  if (!res.ok) throw new Error("base64 decode failed");
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 function bytesToBase64(bytes) {
