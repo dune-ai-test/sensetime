@@ -98,7 +98,7 @@ Edit a photo: reply to any photo with an instruction, e.g. "make it snow".`;
 /* ---------- entry ---------- */
 
 export async function onRequestPost(context) {
-  const { request, env, waitUntil } = context;
+  const { request, env } = context;
 
   const secret = env.TELEGRAM_WEBHOOK_SECRET || "";
   if (!secret) return new Response("TELEGRAM_WEBHOOK_SECRET is not configured", { status: 500 });
@@ -113,12 +113,24 @@ export async function onRequestPost(context) {
     return new Response("bad json");
   }
 
-  // Telegram times out webhooks at ~60s; acknowledge now, work in background.
-  waitUntil(
-    handleUpdate(update, env).catch((err) => {
-      log(env, update?.message?.chat?.id ?? update?.callback_query?.message?.chat?.id ?? "?", "crash", (err.stack || err).toString());
-    }),
-  );
+  /* Work happens INSIDE this request (like the website does) — background
+   * waitUntil continuations are capped ~30 s and were silently killing slow
+   * generations. Telegram gives up waiting after ~60 s and retries, so KV
+   * dedupes by update_id: "running" (10 min) then "done" (24 h). Clients
+   * disconnecting does not cancel the Worker — the photo still gets sent. */
+  const dedupeKey = Number.isInteger(update.update_id) ? `upd-${update.update_id}` : "";
+  if (dedupeKey && env.LOGS) {
+    const prev = await env.LOGS.get(dedupeKey);
+    if (prev) return new Response(`duplicate update ignored (${prev})`);
+    await env.LOGS.put(dedupeKey, "running", { expirationTtl: 600 });
+  }
+  try {
+    await handleUpdate(update, env);
+    if (dedupeKey && env.LOGS) await env.LOGS.put(dedupeKey, "done", { expirationTtl: 86400 });
+  } catch (err) {
+    log(env, update?.message?.chat?.id ?? update?.callback_query?.message?.chat?.id ?? "?", "crash", (err.stack || err).toString());
+    if (dedupeKey && env.LOGS) await env.LOGS.delete(dedupeKey); // let Telegram's retry re-run it
+  }
   return new Response("ok");
 }
 
