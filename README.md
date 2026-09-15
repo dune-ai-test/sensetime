@@ -131,7 +131,36 @@ work regardless.
    id - show my telegram id
    ```
 
-### Debugging with the /logs page
+### Recommended: run the bot on Render with long-polling (`render/bot.js`)
+
+**Why:** Telegram closes webhook connections after ~60 s and Cloudflare then
+kills the Pages function mid-wait — so any generation longer than ~55 s
+(4K, or Lite when busy) can never deliver through the `/tg` webhook.
+A long-polling process has no deadline: it waits as long as SenseNova needs
+and pushes the photo whenever it's ready. Bonus: per-chat settings
+(`/size`, `/model` buttons) become fully reliable, because the process is
+persistent instead of random Cloudflare isolates.
+
+1. **Remove the webhook first** (long-poll and webhook conflict):
+   `https://api.telegram.org/bot<TOKEN>/deleteWebhook`
+2. **Render → New → Web Service**, connect `dune-ai-test/sensetime`:
+   - Runtime: Node · Build command: *(empty)* · Start command: `node render/bot.js`
+   - Env vars: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_IDS`, `SENSENOVA_API_KEY`
+3. **Keep it awake** (Render free tier sleeps 15 min after the last incoming
+   request; an up-poll loop produces none). Create a free
+   [UptimeRobot](https://uptimerobot.com) HTTP monitor hitting
+   `https://<your-service>.onrender.com/` every 5 minutes. With ~24/7 uptime
+   the service uses ≈744 of Render's 750 free hours/month — fine for one
+   service; anything more costs the paid tier.
+4. **Same feature set as the webhook bot**: text→image, reply-photo→edit,
+   `/model` `/size` `/format` `/options` `/settings` `/reset` `/id`,
+   `[tags]` overrides, photo-vs-document upload switch, big green/❌ status.
+
+The Cloudflare `/tg` webhook route stays in the repo — it's a harmless
+fallback if Render is ever down (webhook re-register to switch back), but
+only one of the two can be active at a time.
+
+### Debugging with the /logs page (webhook bot)
 
 The bot writes every step (message received, allowlist decision, job start,
 upstream status/timing, photo sent, any crash) to Cloudflare KV, and
@@ -154,6 +183,9 @@ If `LOGS` is not bound, the bot still works — logging is silently skipped.
 - `job` but no `upstream-ok` → SenseNova call failed or timed out (`upstream-err`
   / `fail` has the message)
 - `upstream-ok` but no `sent` → Telegram refused the photo (`fail` has the reason)
+
+(The Render long-poll bot logs the same trail to Render's **Logs** tab
+instead — including `sent <chat> <KB> <sec> <size>` lines.)
 
 Security: the webhook verifies Telegram's `X-Telegram-Bot-Api-Secret-Token`
 header, so strangers POSTing to `/tg` are rejected; the allowlist gates
