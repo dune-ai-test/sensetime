@@ -12,6 +12,7 @@
  */
 
 import { log } from "./_shared/log.js";
+import { bumpGlobal } from "./_shared/quota.js";
 
 const UPSTREAM = "https://token.sensenova.ai/v1/images";
 
@@ -425,6 +426,7 @@ async function runImageJob(env, chatId, { endpoint, label, payload }) {
       log(env, chatId, "sent", "via url");
     }
     await deleteMessage(env, chatId, status);
+    bumpGlobal(env); // bot jobs count toward the same budget pill
   } catch (err) {
     log(env, chatId, "fail", err.message);
     await edit(env, chatId, status, `❌ ${err.message}`);
@@ -458,22 +460,16 @@ const edit = (env, chatId, messageId, text) =>
 const deleteMessage = (env, chatId, messageId) =>
   messageId ? tgJson(env, "deleteMessage", { chat_id: chatId, message_id: messageId }) : Promise.resolve();
 
-/* photo: CDN URL string (preferred — Telegram fetches it, zero Worker CPU)
- * or a Uint8Array (fallback; large uploads can hit the CPU limit). */
+/* photo: CDN URL string (Telegram fetches it) or Uint8Array. Always sent as
+ * a document — consistent delivery, no 5 MB photo cap, original bytes kept. */
 async function sendImage(env, chatId, photo, mime, caption) {
   const asUrl = typeof photo === "string";
-  // Telegram: photos cap at 5 MB upload; documents allow 20 MB.
-  const asFile = !asUrl && photo.byteLength > 4_500_000;
-  const method = asUrl || !asFile ? "sendPhoto" : "sendDocument";
   const form = new FormData();
   form.append("chat_id", String(chatId));
   form.append("caption", clip(caption, 1000));
-  if (asUrl) form.append("photo", photo);
-  else {
-    const ext = mime.split("/")[1];
-    form.append(asFile ? "document" : "photo", new File([photo], `nova.${ext}`, { type: mime }));
-  }
-  const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, { method: "POST", body: form });
+  if (asUrl) form.append("document", photo);
+  else form.append("document", new File([photo], fileName(caption, mime.split("/")[1]), { type: mime }));
+  const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`, { method: "POST", body: form });
   const data = await res.json().catch(() => ({}));
   if (!data.ok) throw new Error(`sendImage failed: ${data.description || res.status}`);
   return data.result;
@@ -491,6 +487,19 @@ async function tgJson(env, method, payload) {
 /* ---------- misc utils ---------- */
 
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+
+/* nova-prompt-slug-153012.png — meaningful document names (see send-tg.js). */
+function fileName(caption, ext) {
+  const slug = String(caption || "")
+    .split("\n")[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 44)
+    .replace(/-+$/, "");
+  const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+  return `nova-${slug || "image"}-${stamp}.${ext}`;
+}
 
 /* Decode via the runtime's native data-URL handler: fast and CPU-cheap.
  * The previous charCodeAt loop burned ~300 ms on 2 MB images — over the

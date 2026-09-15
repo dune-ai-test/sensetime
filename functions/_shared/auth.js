@@ -33,9 +33,19 @@ export function readSession(request) {
   return "";
 }
 
-export async function isAuthenticated(request, password) {
-  if (!password) return false;
-  return readSession(request) === (await sessionToken(password));
+/* Which password does this session cookie correspond to? The cookie is the
+ * HMAC of the password itself, so each password maps to one token and the
+ * role can be re-derived without storing anything. */
+export async function sessionRole(request, env) {
+  const given = readSession(request);
+  if (!given) return null;
+  if (env.LOGIN_PASSWORD && given === (await sessionToken(env.LOGIN_PASSWORD))) return "owner";
+  if (env.DEMO_PASSWORD && given === (await sessionToken(env.DEMO_PASSWORD))) return "demo";
+  return null;
+}
+
+export async function isAuthenticated(request, env) {
+  return (await sessionRole(request, env)) !== null;
 }
 
 /* Set / clear the session cookie. */
@@ -62,7 +72,7 @@ export async function requireAuthOrResponse(request, env) {
   if (!env.LOGIN_PASSWORD) {
     return json({ error: { message: "Server is missing the LOGIN_PASSWORD environment variable." } }, 500);
   }
-  if (!(await isAuthenticated(request, env.LOGIN_PASSWORD))) {
+  if (!(await isAuthenticated(request, env))) {
     return json({ error: { message: "Not signed in.", code: 401 } }, 401);
   }
   return null;

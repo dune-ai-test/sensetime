@@ -102,12 +102,13 @@ const editMsg = (chatId, messageId, text) =>
 const deleteMsg = (chatId, messageId) => messageId && tg("deleteMessage", { chat_id: chatId, message_id: messageId });
 
 async function sendImage(chatId, bytes, mime, caption) {
-  const asFile = bytes.byteLength > 4_500_000; // Telegram: photos max 5 MB, docs 20 MB
-  const method = asFile ? "sendDocument" : "sendPhoto";
+  /* Always a document: consistent delivery, no 5 MB photo cap, original
+   * bytes preserved (Telegram re-compresses sendPhoto uploads). */
+  const method = "sendDocument";
   const form = new FormData();
   form.append("chat_id", String(chatId));
   form.append("caption", clip(caption, 1000));
-  form.append(asFile ? "document" : "photo", new Blob([bytes], { type: mime }), `nova.${mime.split("/")[1]}`);
+  form.append("document", new Blob([bytes], { type: mime }), fileName(caption, mime.split("/")[1]));
   const res = await fetch(`https://api.telegram.org/bot${TOKEN}/${method}`, { method: "POST", body: form });
   const data = await res.json().catch(() => ({}));
   if (!data.ok) throw new Error(`sendImage failed: ${data.description || res.status}`);
@@ -376,6 +377,19 @@ async function runImageJob(chatId, endpoint, label, { prompt, s, images }) {
 /* ---------- long-poll loop ---------- */
 
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+
+/* nova-prompt-slug-153012.png — meaningful document names. */
+function fileName(caption, ext) {
+  const slug = String(caption || "")
+    .split("\n")[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 44)
+    .replace(/-+$/, "");
+  const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+  return `nova-${slug || "image"}-${stamp}.${ext}`;
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let lastOffset = 0;

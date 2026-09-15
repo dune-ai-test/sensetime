@@ -64,6 +64,18 @@ app/
 5. **Settings → Environment variables → Add** (as **Secrets**, both variables, Production + Preview):
    - `SENSENOVA_API_KEY` = your `sk-...` key
    - `LOGIN_PASSWORD` = the password visitors must enter (pick something strong — it is the only gate)
+   - Optional: `DEMO_PASSWORD` — a second, capped password for sharing (see "Usage budget"); `DEMO_LIMIT` (default 30), `QUOTA_CAP` (default 1500).
+
+### Usage budget & demo access
+
+Every successful generation (site **or** Telegram bot) bumps an hourly
+counter in the same `LOGS` KV. The header pill shows the rolling 5-hour
+total (`142/1500 USED · 5 H`), refreshed at login and after each job.
+If you set `DEMO_PASSWORD`, people who sign in with it get the full studio
+but a personal cap of `DEMO_LIMIT` generations per window — enforced
+server-side in `/api/generate` (they see a clean "demo limit reached" error;
+your own unlimited sessions are unaffected). Counters expire with the bucket,
+so the window always rolls itself.
 6. Redeploy (or trigger a deploy) so the variable is live.
 
 Local testing (optional): `npx wrangler pages dev .` with the key set, then

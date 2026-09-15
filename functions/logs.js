@@ -42,7 +42,7 @@ export async function onRequestGet(context) {
 
   const key = url.searchParams.get("key") || "";
   const bySecret = Boolean(env.TELEGRAM_WEBHOOK_SECRET) && key === env.TELEGRAM_WEBHOOK_SECRET;
-  const byCookie = Boolean(env.LOGIN_PASSWORD) && (await isAuthenticated(request, env.LOGIN_PASSWORD));
+  const byCookie = Boolean(env.LOGIN_PASSWORD) && (await isAuthenticated(request, env));
   if (!bySecret && !byCookie) {
     return html("401 — sign in on the site first (same browser), or open /logs?key=&lt;TELEGRAM_WEBHOOK_SECRET&gt;.", 401);
   }

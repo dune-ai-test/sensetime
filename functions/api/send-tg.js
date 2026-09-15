@@ -16,6 +16,20 @@ const json = (obj, status = 200) =>
     headers: { "Content-Type": "application/json" },
   });
 
+/* nova-cozy-kitchen-scene-153012.png — prompt slug + UTC time, so Telegram
+ * document cards read meaningfully instead of "nova.png" every time. */
+function fileName(caption, ext) {
+  const slug = String(caption || "")
+    .split("\n")[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 44)
+    .replace(/-+$/, "");
+  const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+  return `nova-${slug || "image"}-${stamp}.${ext}`;
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
   /* No dedicated TELEGRAM_CHAT_ID needed: in DMs the chat id equals the user
@@ -59,12 +73,13 @@ export async function onRequestPost(context) {
   }
 
   const mime = mimeMatch[1];
-  // Telegram: photos max 5 MB, documents 20 MB.
-  const asFile = bytes.byteLength > 4_500_000;
+  /* Always deliver as document: consistent in-chat appearance, no 5 MB
+   * photo cap, and Telegram stores the original bytes untouched. */
+  const asFile = true;
   const form = new FormData();
   form.append("chat_id", chat);
   form.append("caption", caption);
-  form.append(asFile ? "document" : "photo", new File([bytes], `nova.${mime.split("/")[1]}`, { type: mime }));
+  form.append("document", new File([bytes], fileName(caption, mime.split("/")[1]), { type: mime }));
 
   let res;
   try {

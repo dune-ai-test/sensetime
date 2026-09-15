@@ -50,10 +50,15 @@ export async function onRequestPost(context) {
   }
 
   const password = typeof body.password === "string" ? body.password : "";
-  if (password && equal(password, env.LOGIN_PASSWORD)) {
+  /* LOGIN_PASSWORD = unlimited owner; optional DEMO_PASSWORD = same studio,
+   * capped generations per rolling window (enforced in /api/generate). */
+  let matched = null;
+  if (password && env.LOGIN_PASSWORD && equal(password, env.LOGIN_PASSWORD)) matched = env.LOGIN_PASSWORD;
+  else if (password && env.DEMO_PASSWORD && equal(password, env.DEMO_PASSWORD)) matched = env.DEMO_PASSWORD;
+  if (matched) {
     attempts.delete(ip);
-    const token = await sessionToken(env.LOGIN_PASSWORD);
-    return json({ ok: true }, 200, cookieHeaders(token));
+    const token = await sessionToken(matched);
+    return json({ ok: true, role: matched === env.LOGIN_PASSWORD ? "owner" : "demo" }, 200, cookieHeaders(token));
   }
   return json({ error: { message: "Incorrect password." } }, 401);
 }

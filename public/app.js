@@ -30,7 +30,7 @@ const el = {
   login: $("login"), loginCard: $("loginCard"), loginForm: $("loginForm"),
   loginLoading: $("loginLoading"), loginBtnLabel: $("loginBtnLabel"),
   password: $("password"), loginBtn: $("loginBtn"), loginErr: $("loginErr"),
-  signOut: $("signOut"), lightbox: $("lightbox"), lightboxImg: $("lightboxImg"),
+  signOut: $("signOut"), quota: $("quota"), lightbox: $("lightbox"), lightboxImg: $("lightboxImg"),
   toasts: $("toasts"),
 };
 
@@ -86,6 +86,19 @@ function enterStudio() {
   el.password.value = "";
   el.loginForm.hidden = true;
   el.loginLoading.hidden = false; // ready state for a future session check
+  refreshQuota();
+}
+
+/* Live budget pill: usage across site + bot in the rolling 5 h window. */
+async function refreshQuota() {
+  try {
+    const res = await fetch("/api/quota", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const d = await res.json();
+    el.quota.textContent = d.role === "demo"
+      ? `DEMO ${d.demo.used}/${d.demo.cap} · ${d.windowHours} H`
+      : `${d.used}/${d.cap} USED · ${d.windowHours} H`;
+  } catch { /* keep whatever was shown */ }
 }
 
 el.loginForm.addEventListener("submit", async (e) => {
@@ -272,6 +285,7 @@ async function run() {
       addTile(src, req);
     }
     setHint(`Done — ${items.length} image${items.length > 1 ? "s" : ""} added.`, "ok");
+    refreshQuota();
   } catch (err) {
     slot.remove();
     const msg = String(err.message || err);

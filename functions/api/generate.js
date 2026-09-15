@@ -5,6 +5,9 @@
 
 const UPSTREAM = "https://token.sensenova.ai/v1/images";
 
+import { sessionRole } from "../_shared/auth.js";
+import { usedDemo, bumpDemo, bumpGlobal, demoLimit } from "../_shared/quota.js";
+
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
     status,
@@ -16,6 +19,12 @@ export async function onRequestPost(context) {
 
   if (!env.SENSENOVA_API_KEY) {
     return json({ error: { message: "Server is missing the SENSENOVA_API_KEY environment variable." } }, 500);
+  }
+
+  /* Demo sessions share the studio but burn their own capped budget. */
+  const role = await sessionRole(request, env);
+  if (role === "demo" && (await usedDemo(env)) >= demoLimit(env)) {
+    return json({ error: { message: `Demo limit reached (${demoLimit(env)} generations per 5 h window). Try again later or ask the owner for full access.` } }, 429);
   }
 
   let body;
@@ -77,9 +86,15 @@ export async function onRequestPost(context) {
     return json({ error: { message, code: upstream.status } }, upstream.status === 429 ? 429 : 502);
   }
 
+  let data;
   try {
-    return json(JSON.parse(text));
+    data = JSON.parse(text);
   } catch {
     return json({ error: { message: "SenseNova returned a non-JSON response." } }, 502);
   }
+  if (data?.data?.[0]?.b64_json || data?.data?.[0]?.url) {
+    await bumpGlobal(env); // shared budget for the header pill
+    if (role === "demo") await bumpDemo(env);
+  }
+  return json(data);
 }
