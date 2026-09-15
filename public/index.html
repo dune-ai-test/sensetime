@@ -313,6 +313,10 @@
         <span class="t">Watermark<small>Adds a SenseNova mark to the output</small></span>
         <span class="sw"><input type="checkbox" id="watermark" /><i></i></span>
       </div>
+      <div class="opt">
+        <span class="t">Auto-send to Telegram<small>Sends each finished image 10 s after it lands in the gallery</small></span>
+        <span class="sw"><input type="checkbox" id="autoTg" /><i></i></span>
+      </div>
 
       <button class="cta" id="go" type="button"><span id="goLabel">Generate image</span><span class="arr">→</span></button>
       <div class="hint" id="status"></div>
@@ -352,7 +356,7 @@
 
 <div class="lightbox" id="lightbox"><img id="lightboxImg" alt="" /></div>
 <div class="toasts" id="toasts"></div>
-<footer class="build">Nova Studio v0.1.11</footer>
+<footer class="build">Nova Studio v0.1.12</footer>
 
 <script src="app.js"></script>
 </body>

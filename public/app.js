@@ -22,7 +22,7 @@ const MODELS = {
 const $ = (id) => document.getElementById(id);
 const el = {
   modelList: $("modelList"), sizeChips: $("sizeChips"), format: $("format"),
-  prompt: $("prompt"), promptExtend: $("promptExtend"), watermark: $("watermark"),
+  prompt: $("prompt"), promptExtend: $("promptExtend"), watermark: $("watermark"), autoTg: $("autoTg"),
   go: $("go"), goLabel: $("goLabel"), status: $("status"),
   gallery: $("gallery"), empty: $("empty"), count: $("count"), clearAll: $("clearAll"),
   tabGenerate: $("tabGenerate"), tabEdit: $("tabEdit"), editBlock: $("editBlock"),
@@ -347,6 +347,7 @@ function addTile(src, req) {
     `<time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>`;
   foot.append(p, meta);
 
+  if (el.autoTg.checked) scheduleAutoSend(tgBtn, src, req);
   fig.append(holder, foot, actions);
   el.gallery.prepend(fig);
   refreshCount();
@@ -384,7 +385,9 @@ function tgCaption(req) {
 }
 
 async function sendToTg(btn, src, req) {
-  if (btn.disabled) return;
+  if (btn.disabled || btn.dataset.sending === "1") return;
+  if (btn.dataset.sent === "1") return; // auto-send already delivered it
+  btn.dataset.sending = "1";
   btn.disabled = true;
   btn.textContent = "Sending…";
   try {
@@ -397,6 +400,7 @@ async function sendToTg(btn, src, req) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
     toast(`Sent to Telegram (${data.via}${data.kb ? ` · ${data.kb} KB` : ""}).`);
+    btn.dataset.sent = "1";
     btn.textContent = "sent ✓";
     btn.classList.add("ok");
     setTimeout(() => { btn.textContent = "telegram"; btn.classList.remove("ok"); }, 3000);
@@ -405,7 +409,23 @@ async function sendToTg(btn, src, req) {
     btn.textContent = "telegram";
   } finally {
     btn.disabled = false;
+    btn.dataset.sending = "";
   }
+}
+
+/* 10 s countdown on the tile's telegram button before auto-sending.
+ * Cancelled silently if the send already happened or is in flight. */
+function scheduleAutoSend(btn, src, req) {
+  let n = 10;
+  const iv = setInterval(() => {
+    n -= 1;
+    if (n <= 0) {
+      clearInterval(iv);
+      if (btn.dataset.sent !== "1") sendToTg(btn, src, req);
+      return;
+    }
+    if (btn.dataset.sent !== "1" && !btn.disabled) btn.textContent = `auto-send in ${n}s`;
+  }, 1000);
 }
 
 async function download(src, req) {
@@ -444,6 +464,13 @@ addEventListener("keydown", (e) => { if (e.key === "Escape") el.lightbox.classLi
   renderModels();
   renderSizes();
   setMode("generate");
+  try {
+    el.autoTg.checked = localStorage.getItem("nova.autoTg") === "1";
+    el.autoTg.addEventListener("change", () => {
+      try { localStorage.setItem("nova.autoTg", el.autoTg.checked ? "1" : "0"); } catch {}
+      toast(el.autoTg.checked ? "Auto-send ON — new images go to Telegram 10 s after they appear." : "Auto-send OFF.");
+    });
+  } catch {}
   try {
     const res = await fetch("/me", { credentials: "same-origin" });
     const data = await res.json().catch(() => ({}));
