@@ -28,6 +28,7 @@ const el = {
   tabGenerate: $("tabGenerate"), tabEdit: $("tabEdit"), editBlock: $("editBlock"),
   dropzone: $("dropzone"), file: $("file"), thumbs: $("thumbs"),
   login: $("login"), loginCard: $("loginCard"), loginForm: $("loginForm"),
+  loginLoading: $("loginLoading"), loginBtnLabel: $("loginBtnLabel"),
   password: $("password"), loginBtn: $("loginBtn"), loginErr: $("loginErr"),
   signOut: $("signOut"), lightbox: $("lightbox"), lightboxImg: $("lightboxImg"),
   toasts: $("toasts"),
@@ -69,6 +70,12 @@ async function api(path, opts = {}) {
 function showLogin() {
   el.login.classList.remove("hidden");
   el.signOut.hidden = true;
+  revealForm();
+}
+
+function revealForm() {
+  el.loginLoading.hidden = true;
+  el.loginForm.hidden = false;
   setTimeout(() => el.password.focus(), 50);
 }
 
@@ -77,6 +84,8 @@ function enterStudio() {
   el.signOut.hidden = false;
   el.loginErr.textContent = "";
   el.password.value = "";
+  el.loginForm.hidden = true;
+  el.loginLoading.hidden = false; // ready state for a future session check
 }
 
 el.loginForm.addEventListener("submit", async (e) => {
@@ -84,7 +93,8 @@ el.loginForm.addEventListener("submit", async (e) => {
   if (busy) return;
   busy = true;
   el.loginBtn.disabled = true;
-  el.loginBtn.innerHTML = '<span class="spin"></span>';
+  el.loginBtnLabel.textContent = "Checking…";
+  el.loginErr.textContent = "";
   try {
     const res = await fetch("/login", {
       method: "POST",
@@ -104,7 +114,7 @@ el.loginForm.addEventListener("submit", async (e) => {
     el.loginErr.textContent = String(err.message || err);
   } finally {
     el.loginBtn.disabled = false;
-    el.loginBtn.innerHTML = "<span>Enter studio</span>";
+    el.loginBtnLabel.textContent = "Enter studio";
     busy = false;
   }
 });

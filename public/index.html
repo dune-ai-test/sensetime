@@ -214,18 +214,31 @@
   .empty span { font-size: 13.5px; color: var(--ink3); }
 
   /* ---------- login ---------- */
-  .login { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: var(--paper); padding: 24px; }
+  .login {
+    position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px;
+    background: radial-gradient(1200px 620px at 50% -20%, #ffffff 0%, var(--paper) 55%);
+  }
   .login.hidden { display: none; }
-  .login-card { width: min(400px, 100%); animation: rise .35s ease both; }
-  .login-card .mast { text-align: center; margin-bottom: 34px; }
-  .login-card h1 { font-size: 30px; letter-spacing: -.015em; }
-  .login-card h1 em { font-style: normal; color: var(--green); }
-  .login-card .sub { font: 11px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink3); margin-top: 8px; }
-  .login-card form { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 26px; box-shadow: 0 10px 40px -20px rgba(29,28,25,.25); }
-  #password { border: 0; border-bottom: 1px solid var(--line2); border-radius: 0; background: transparent; padding: 10px 2px; text-align: center; letter-spacing: .08em; }
-  #password:focus { outline: none; border-bottom-color: var(--green); }
-  .login-card .cta { margin-top: 18px; }
-  .login-err { font: 12px var(--mono); color: var(--err); text-align: center; margin-top: 12px; min-height: 17px; }
+  .login-card {
+    width: min(380px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 28px; box-shadow: 0 1px 2px rgba(29,28,25,.05), 0 24px 60px -30px rgba(29,28,25,.30);
+    animation: rise .3s ease both;
+  }
+  .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; }
+  .login-brand .mark {
+    width: 38px; height: 38px; flex: none; border-radius: 9px; background: var(--ink); color: var(--paper);
+    font: 650 18px var(--serif); display: grid; place-items: center;
+  }
+  .login-brand h1 { font-size: 19px; font-weight: 650; }
+  .login-brand p { font: 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); margin-top: 3px; }
+  .login-loading { display: flex; align-items: center; gap: 10px; color: var(--ink3); font: 12.5px var(--mono); padding: 4px 0; }
+  .dotpulse { width: 12px; height: 12px; flex: none; border-radius: 50%; border: 2px solid var(--line2); border-top-color: var(--green); animation: rot .8s linear infinite; }
+  .field-lab { display: block; font: 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink3); margin-bottom: 8px; }
+  #password { text-align: left; letter-spacing: 0; padding: 12px 14px; border: 1px solid var(--line2); border-radius: 8px; background: var(--paper); }
+  #password:focus { outline: 2px solid var(--green); outline-offset: -1px; border-color: var(--green); }
+  .login-cta { margin-top: 12px; min-height: 46px; }
+  .login-err { font: 12px var(--mono); color: var(--err); margin-top: 12px; min-height: 17px; }
+  .login-foot { position: fixed; bottom: 14px; left: 0; right: 0; text-align: center; font: 10.5px var(--mono); color: var(--ink3); }
   .login-card.shake { animation: shake .3s; }
   @keyframes shake { 20%,60% { transform: translateX(-5px); } 40%,80% { transform: translateX(5px); } }
 
@@ -342,21 +355,27 @@
 <!-- ============ login ============ -->
 <div class="login" id="login">
   <div class="login-card" id="loginCard">
-    <div class="mast">
-      <h1>Nova <em>Studio</em></h1>
-      <div class="sub">Private image generation</div>
-    </div>
-    <form id="loginForm">
-      <input type="password" id="password" placeholder="Password" autocomplete="current-password" required />
-      <button class="cta" type="submit" id="loginBtn"><span>Enter studio</span></button>
-      <div class="login-err" id="loginErr"></div>
+    <header class="login-brand">
+      <span class="mark">N</span>
+      <div>
+        <h1>Nova Studio</h1>
+        <p>Private image generation</p>
+      </div>
+    </header>
+    <div class="login-loading" id="loginLoading"><span class="dotpulse"></span> Checking session…</div>
+    <form id="loginForm" hidden>
+      <label class="field-lab" for="password">Password</label>
+      <input type="password" id="password" placeholder="Enter studio password" autocomplete="current-password" required />
+      <button class="cta login-cta" type="submit" id="loginBtn"><span id="loginBtnLabel">Enter studio</span><span class="arr">→</span></button>
+      <div class="login-err" id="loginErr" role="alert"></div>
     </form>
   </div>
+  <div class="login-foot">Nova Studio · v0.1.13</div>
 </div>
 
 <div class="lightbox" id="lightbox"><img id="lightboxImg" alt="" /></div>
 <div class="toasts" id="toasts"></div>
-<footer class="build">Nova Studio v0.1.12</footer>
+<footer class="build">Nova Studio v0.1.13</footer>
 
 <script src="app.js"></script>
 </body>
