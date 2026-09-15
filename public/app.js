@@ -121,8 +121,8 @@ function renderModels() {
   for (const [id, m] of Object.entries(MODELS)) {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "model-card" + (id === model ? " sel" : "");
-    b.innerHTML = `<span class="model-radio"></span><span><b>${m.name}</b><span>${m.desc}</span></span><span class="tag">${m.tag}</span>`;
+    b.className = "model-row" + (id === model ? " sel" : "");
+    b.innerHTML = `<b>${m.name}</b><span>${m.desc}</span>`;
     b.addEventListener("click", () => {
       model = id;
       size = MODELS[id].sizes[0];
@@ -152,10 +152,22 @@ function setMode(m) {
   el.tabGenerate.classList.toggle("on", m === "generate");
   el.tabEdit.classList.toggle("on", m === "edit");
   el.editBlock.hidden = m !== "edit";
-  el.goLabel.textContent = m === "edit" ? "Apply edit" : "Create image";
+  el.goLabel.textContent = m === "edit" ? "Apply edit" : "Generate image";
+  renumberSteps();
   el.prompt.placeholder = m === "edit"
     ? "Instruction for the source image(s), e.g. “remove the background”, “make it snow”…"
     : "e.g. A serene Japanese garden at dusk, stone lanterns glowing, koi pond reflections, cinematic lighting";
+}
+
+/* 01, 02, 03… only visible composer sections are numbered. */
+function renumberSteps() {
+  const labels = document.querySelectorAll(".composer .lab b");
+  let n = 0;
+  for (const b of labels) {
+    if (b.closest(".blk")?.hidden) continue;
+    n += 1;
+    b.textContent = String(n).padStart(2, "0");
+  }
 }
 
 el.tabGenerate.addEventListener("click", () => setMode("generate"));
@@ -210,8 +222,13 @@ async function run() {
   busy = true;
   el.go.disabled = true;
   el.go.insertAdjacentHTML("afterbegin", '<span class="spin"></span>');
-  setHint("Generating — 10 to 60 s depending on size…");
+  setHint("Rendering…");
   const slot = addSkeleton();
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    slot.textContent = `Rendering… ${Math.round((Date.now() - t0) / 1000)}s`;
+  }, 1000);
+  slot.textContent = "Rendering… 0s";
 
   const req = {
     mode,
@@ -251,6 +268,7 @@ async function run() {
     setHint(msg, "err");
     toast(msg, "err");
   } finally {
+    clearInterval(tick);
     busy = false;
     el.go.disabled = false;
     el.go.querySelector(".spin")?.remove();
@@ -293,14 +311,14 @@ function addTile(src, req) {
   const veil = document.createElement("div");
   veil.className = "veil";
 
-  const tgBtn = mkBtn("Send → Telegram");
+  const tgBtn = mkBtn("telegram");
   tgBtn.addEventListener("click", () => sendToTg(tgBtn, src, req));
-  const dl = mkBtn("Download");
+  const dl = mkBtn("download");
   dl.addEventListener("click", () => download(src, req));
-  const reuse = mkBtn("Reuse prompt");
+  const reuse = mkBtn("reuse prompt");
   reuse.addEventListener("click", () => { el.prompt.value = req.prompt; el.prompt.focus(); });
   if (MODELS[req.model].edit) {
-    const use = mkBtn("Use as source");
+    const use = mkBtn("use as source");
     use.addEventListener("click", async () => {
       sources.push({ name: "gallery image", dataUrl: await toDataUrl(src) });
       renderThumbs();
@@ -374,11 +392,11 @@ async function sendToTg(btn, src, req) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
     toast(`Sent to Telegram (${data.via}${data.kb ? ` · ${data.kb} KB` : ""}).`);
-    btn.textContent = "Sent ✓";
-    setTimeout(() => { btn.textContent = "Send → Telegram"; }, 3000);
+    btn.textContent = "sent ✓";
+    setTimeout(() => { btn.textContent = "telegram"; }, 3000);
   } catch (err) {
     toast(err.message, "err");
-    btn.textContent = "Send → Telegram";
+    btn.textContent = "telegram";
   } finally {
     btn.disabled = false;
   }
