@@ -5,8 +5,10 @@
  * sending is a plain Bot API call taking seconds — the slow part already
  * happened in your browser. No webhook or long-poll needed for this route.
  *
- * Env: TELEGRAM_BOT_TOKEN (already set), TELEGRAM_CHAT_ID (your numeric id).
+ * Env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID; all outcomes recorded in /logs.
  */
+
+import { log } from "../_shared/log.js";
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
@@ -16,8 +18,11 @@ const json = (obj, status = 200) =>
 
 export async function onRequestPost(context) {
   const { request, env } = context;
+  const chat = env.TELEGRAM_CHAT_ID || "?";
+  const started = Date.now();
 
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
+    await log(env, chat, "web:err", "missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID env var");
     return json({ error: { message: "Server is missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID." } }, 500);
   }
 
@@ -25,6 +30,7 @@ export async function onRequestPost(context) {
   try {
     body = await request.json();
   } catch {
+    await log(env, chat, "web:err", "bad JSON body");
     return json({ error: { message: "Request body must be JSON." } }, 400);
   }
 
@@ -32,14 +38,18 @@ export async function onRequestPost(context) {
   const caption = String(body.caption || "").slice(0, 1000);
   const mimeMatch = dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,/);
   if (!mimeMatch || dataUrl.length > 30_000_000) {
+    await log(env, chat, "web:err", `invalid dataUrl (prefix: ${dataUrl.slice(0, 24) || "none"})`);
     return json({ error: { message: "dataUrl must be a base64 image (≤ ~22 MB)." } }, 400);
   }
+
+  await log(env, chat, "web:send", `${mimeMatch[1]} ${Math.round(dataUrl.length / 1024)} KB b64 · “${caption.slice(0, 80)}”`);
 
   // Native data-URL decode — CPU-cheap for multi-MB images.
   let bytes;
   try {
     bytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
   } catch {
+    await log(env, chat, "web:err", "decode failed");
     return json({ error: { message: "Could not decode the image." } }, 400);
   }
 
@@ -51,13 +61,24 @@ export async function onRequestPost(context) {
   form.append("caption", caption);
   form.append(asFile ? "document" : "photo", new File([bytes], `nova.${mime.split("/")[1]}`, { type: mime }));
 
-  const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${asFile ? "sendDocument" : "sendPhoto"}`, {
-    method: "POST",
-    body: form,
-  });
+  let res;
+  try {
+    res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${asFile ? "sendDocument" : "sendPhoto"}`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (err) {
+    await log(env, chat, "web:fail", `network: ${err.message}`);
+    return json({ error: { message: `Could not reach Telegram: ${err.message}` } }, 502);
+  }
+
   const data = await res.json().catch(() => ({}));
   if (!data.ok) {
-    return json({ error: { message: `Telegram: ${data.description || `HTTP ${res.status}`}` } }, 502);
+    const description = data.description || `HTTP ${res.status}`;
+    await log(env, chat, "web:fail", `Telegram refused (${asFile ? "document" : "photo"}): ${description}`);
+    return json({ error: { message: `Telegram: ${description}` } }, 502);
   }
+
+  await log(env, chat, "web:sent", `${asFile ? "document" : "photo"} · ${Math.round(bytes.byteLength / 1024)} KB · ${((Date.now() - started) / 1000).toFixed(1)}s`);
   return json({ ok: true, via: asFile ? "document" : "photo", kb: Math.round(bytes.byteLength / 1024) });
 }

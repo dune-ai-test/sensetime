@@ -21,9 +21,9 @@ const PAGE = (rows, key) => `<!doctype html><html><head><meta charset="utf-8"><t
   td { padding:4px 10px 4px 0; border-bottom:1px solid #1d1d23; vertical-align:top; }
   td.t { white-space:nowrap; color:#6b6b75; }
   .e { padding:1px 7px; border-radius:6px; border:1px solid #26262c; background:#16161b; white-space:nowrap; }
-  .e.job,.e.sent { border-color:#1e4d38; color:#34d399; }
-  .e.deny,.e.deny\\:nolist,.e.upstream-err,.e.fail,.e.crash,.e.err\\:noapikey { border-color:#5a2330; color:#f87171; }
-  .e.cb,.e.msg { color:#a1a1aa; }
+  .e.job,.e.sent,.e.web\\:sent { border-color:#1e4d38; color:#34d399; }
+  .e.deny,.e.deny\\:nolist,.e.upstream-err,.e.fail,.e.crash,.e.err\\:noapikey,.e.web\\:err,.e.web\\:fail { border-color:#5a2330; color:#f87171; }
+  .e.cb,.e.msg,.e.web\\:send { color:#a1a1aa; }
   .d { color:#c9c9d1; word-break:break-word; }
   .note { font-family:system-ui; color:#fbbf24; margin-bottom:12px; }
 </style></head><body>

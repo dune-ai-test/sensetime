@@ -11,6 +11,8 @@
  *   TELEGRAM_WEBHOOK_SECRET   any long random string, sent by Telegram as a header
  */
 
+import { log } from "./_shared/log.js";
+
 const UPSTREAM = "https://token.sensenova.ai/v1/images";
 
 const MODELS = {
@@ -132,20 +134,6 @@ export async function onRequestPost(context) {
     if (dedupeKey && env.LOGS) await env.LOGS.delete(dedupeKey); // let Telegram's retry re-run it
   }
   return new Response("ok");
-}
-
-/* ---------- event log (Cloudflare KV binding named LOGS; optional) ---------- */
-
-async function log(env, chatId, event, detail = "") {
-  if (!env.LOGS) return;
-  try {
-    const key = `log-${String(Date.now()).padStart(14, "0")}-${Math.random().toString(36).slice(2, 8)}`;
-    await env.LOGS.put(
-      key,
-      JSON.stringify({ t: Date.now(), chatId, event, detail: String(detail).slice(0, 400) }),
-      { expirationTtl: 7 * 24 * 3600 },
-    );
-  } catch { /* logging must never break the bot */ }
 }
 
 /* ---------- routing ---------- */
