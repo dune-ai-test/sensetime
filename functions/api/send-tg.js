@@ -18,12 +18,17 @@ const json = (obj, status = 200) =>
 
 export async function onRequestPost(context) {
   const { request, env } = context;
-  const chat = env.TELEGRAM_CHAT_ID || "?";
+  /* No dedicated TELEGRAM_CHAT_ID needed: in DMs the chat id equals the user
+   * id, so default to the first TELEGRAM_ALLOWED_IDS entry. Set
+   * TELEGRAM_CHAT_ID explicitly for groups or a non-owner destination. */
+  const chat = env.TELEGRAM_CHAT_ID
+    || (env.TELEGRAM_ALLOWED_IDS || "").split(",")[0]?.trim()
+    || "?";
   const started = Date.now();
 
-  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
-    await log(env, chat, "web:err", "missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID env var");
-    return json({ error: { message: "Server is missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID." } }, 500);
+  if (!env.TELEGRAM_BOT_TOKEN || chat === "?") {
+    await log(env, chat, "web:err", "missing TELEGRAM_BOT_TOKEN, and no TELEGRAM_CHAT_ID / TELEGRAM_ALLOWED_IDS to fall back to");
+    return json({ error: { message: "Server is missing TELEGRAM_BOT_TOKEN or a chat id (TELEGRAM_CHAT_ID / TELEGRAM_ALLOWED_IDS)." } }, 500);
   }
 
   let body;
@@ -57,7 +62,7 @@ export async function onRequestPost(context) {
   // Telegram: photos max 5 MB, documents 20 MB.
   const asFile = bytes.byteLength > 4_500_000;
   const form = new FormData();
-  form.append("chat_id", env.TELEGRAM_CHAT_ID);
+  form.append("chat_id", chat);
   form.append("caption", caption);
   form.append(asFile ? "document" : "photo", new File([bytes], `nova.${mime.split("/")[1]}`, { type: mime }));
 
