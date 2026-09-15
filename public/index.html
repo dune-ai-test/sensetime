@@ -299,6 +299,13 @@
     border-radius: 50%; animation: rot .7s linear infinite; flex: none;
   }
   @keyframes rot { to { transform: rotate(360deg); } }
+
+  /* build stamp */
+  .build {
+    position: fixed; left: 14px; bottom: 8px; z-index: 10;
+    font-size: 11px; color: var(--text3); opacity: .75; user-select: none;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -402,6 +409,8 @@
 
 <div class="lightbox" id="lightbox"><img id="lightboxImg" alt="" /></div>
 <div class="toasts" id="toasts"></div>
+
+<footer class="build">Nova Studio v0.1.5</footer>
 
 <script src="app.js"></script>
 </body>
