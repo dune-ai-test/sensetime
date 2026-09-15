@@ -307,9 +307,10 @@ function addTile(src, req) {
   img.src = src;
   img.loading = "lazy";
   img.addEventListener("click", () => openLightbox(src));
+  holder.appendChild(img);
 
-  const veil = document.createElement("div");
-  veil.className = "veil";
+  const actions = document.createElement("div");
+  actions.className = "tile-actions";
 
   const tgBtn = mkBtn("telegram");
   tgBtn.addEventListener("click", () => sendToTg(tgBtn, src, req));
@@ -317,6 +318,8 @@ function addTile(src, req) {
   dl.addEventListener("click", () => download(src, req));
   const reuse = mkBtn("reuse prompt");
   reuse.addEventListener("click", () => { el.prompt.value = req.prompt; el.prompt.focus(); });
+
+  actions.append(dl, tgBtn, reuse);
   if (MODELS[req.model].edit) {
     const use = mkBtn("use as source");
     use.addEventListener("click", async () => {
@@ -325,10 +328,12 @@ function addTile(src, req) {
       setMode("edit");
       toast("Added to Edit sources.");
     });
-    veil.appendChild(use);
+    actions.appendChild(use); // complete 2×2
+  } else {
+    const zoom = mkBtn("zoom");
+    zoom.addEventListener("click", () => openLightbox(src));
+    actions.appendChild(zoom); // fill fourth cell
   }
-  veil.append(reuse, tgBtn, dl);
-  holder.append(img, veil);
 
   const foot = document.createElement("figcaption");
   foot.className = "tile-foot";
@@ -342,7 +347,7 @@ function addTile(src, req) {
     `<time>${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>`;
   foot.append(p, meta);
 
-  fig.append(holder, foot);
+  fig.append(holder, foot, actions);
   el.gallery.prepend(fig);
   refreshCount();
 }
@@ -393,7 +398,8 @@ async function sendToTg(btn, src, req) {
     if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
     toast(`Sent to Telegram (${data.via}${data.kb ? ` · ${data.kb} KB` : ""}).`);
     btn.textContent = "sent ✓";
-    setTimeout(() => { btn.textContent = "telegram"; }, 3000);
+    btn.classList.add("ok");
+    setTimeout(() => { btn.textContent = "telegram"; btn.classList.remove("ok"); }, 3000);
   } catch (err) {
     toast(err.message, "err");
     btn.textContent = "telegram";
