@@ -160,6 +160,26 @@ The Cloudflare `/tg` webhook route stays in the repo — it's a harmless
 fallback if Render is ever down (webhook re-register to switch back), but
 only one of the two can be active at a time.
 
+### Send a website image to Telegram (works on Pages alone, any size/speed)
+
+The 60 s webhook ceiling only affects *receiving* messages. *Sending* is a
+plain Bot API call that takes seconds — the slow generation already happened
+in your browser. So every gallery tile has a **Send → Telegram** button:
+it forwards the finished image to your chat with the full prompt + settings
+tag line (`[lite][4096x4096][png][noextend] …`) in the caption; >4.5 MB
+files arrive as documents automatically.
+
+Setup (one-time, Cloudflare only):
+
+1. Pages → Settings → Environment variables → add:
+   - `TELEGRAM_CHAT_ID` = your numeric Telegram id (the bot replies to `/id`
+     with it; yours is `1109142596`)
+   - `TELEGRAM_BOT_TOKEN` is already set from the webhook bot.
+2. Retry the deployment.
+3. Sign in on the site → generate anything (even 4K, even minutes) → click
+   **Send → Telegram** on the tile. The route is `/api/send-tg` and inherits
+   the site login — nobody outside your session can push to your chat.
+
 ### Debugging with the /logs page (webhook bot)
 
 The bot writes every step (message received, allowlist decision, job start,

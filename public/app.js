@@ -293,6 +293,8 @@ function addTile(src, req) {
   const veil = document.createElement("div");
   veil.className = "veil";
 
+  const tgBtn = mkBtn("Send → Telegram");
+  tgBtn.addEventListener("click", () => sendToTg(tgBtn, src, req));
   const dl = mkBtn("Download");
   dl.addEventListener("click", () => download(src, req));
   const reuse = mkBtn("Reuse prompt");
@@ -307,7 +309,7 @@ function addTile(src, req) {
     });
     veil.appendChild(use);
   }
-  veil.append(reuse, dl);
+  veil.append(reuse, tgBtn, dl);
   holder.append(img, veil);
 
   const foot = document.createElement("figcaption");
@@ -342,6 +344,44 @@ async function toDataUrl(src) {
     r.onload = () => res(r.result);
     r.readAsDataURL(blob);
   });
+}
+
+/* ---------- send to telegram ---------- */
+
+function tgCaption(req) {
+  const tags = [
+    req.model === "sensenova-u1-fast" ? "[fast]" : "[lite]",
+    `[${req.size}]`,
+    `[${req.output_format}]`,
+    req.watermark ? "[watermark]" : "",
+    req.prompt_extend ? "" : "[noextend]",
+    req.mode === "edit" ? "[edit]" : "",
+  ].join("");
+  return `${req.prompt}\n${tags} ${req.model.replace("sensenova-", "")}`;
+}
+
+async function sendToTg(btn, src, req) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "Sending…";
+  try {
+    const dataUrl = await toDataUrl(src);
+    const res = await api("/api/send-tg", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataUrl, caption: tgCaption(req) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+    toast(`Sent to Telegram (${data.via}${data.kb ? ` · ${data.kb} KB` : ""}).`);
+    btn.textContent = "Sent ✓";
+    setTimeout(() => { btn.textContent = "Send → Telegram"; }, 3000);
+  } catch (err) {
+    toast(err.message, "err");
+    btn.textContent = "Send → Telegram";
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function download(src, req) {
